@@ -5,13 +5,16 @@ Kindle → PDF 変換パイプライン
 このスクリプトは以下の処理を順番に実行します：
 1. Kindleスクリーンショットの自動撮影
 2. 重複画像の削除
-3. PNG画像のPDF変換
+3. PNG画像のJPG変換（元のPNGファイルは削除）
+4. JPG画像のPDF変換
 
 使用例:
     python kindle2pdf.py
     python kindle2pdf.py --config custom_config.json
     python kindle2pdf.py --skip-screenshots  # スクリーンショットをスキップ
+    python kindle2pdf.py --skip-png-to-jpg   # PNG → JPG変換をスキップ
     python kindle2pdf.py --skip-duplicates   # 重複削除をスキップ
+    python kindle2pdf.py --skip-pdf          # PDF変換をスキップ
     python kindle2pdf.py --dry-run          # 実際の処理は行わず、計画のみ表示
 """
 
@@ -39,8 +42,9 @@ class KindleToPdfPipeline:
         
         # 各スクリプトのパス
         self.kindless_script = self.script_dir / "kindless.py"
+        self.png_to_jpg_script = self.script_dir / "png_to_jpg.py"
         self.duplicate_remover_script = self.script_dir / "remove_duplicate_images.py"
-        self.pdf_converter_script = self.script_dir / "png_to_pdf.py"
+        self.pdf_converter_script = self.script_dir / "image_to_pdf.py"
         
         # 処理対象フォルダ
         self.screenshots_folder = Path(self.config["output_folder"]) / self.config["book_title"]
@@ -63,8 +67,9 @@ class KindleToPdfPipeline:
         """必要なスクリプトファイルの存在確認"""
         scripts = [
             ("kindless.py", self.kindless_script),
+            ("png_to_jpg.py", self.png_to_jpg_script),
             ("remove_duplicate_images.py", self.duplicate_remover_script),
-            ("png_to_pdf.py", self.pdf_converter_script)
+            ("image_to_pdf.py", self.pdf_converter_script)
         ]
         
         missing_scripts = []
@@ -81,7 +86,7 @@ class KindleToPdfPipeline:
         print("✓ 必要なスクリプトファイルを確認しました")
         return True
     
-    def print_pipeline_info(self, skip_screenshots: bool, skip_duplicates: bool, dry_run: bool):
+    def print_pipeline_info(self, skip_screenshots: bool, skip_png_to_jpg: bool, skip_duplicates: bool, skip_pdf: bool, dry_run: bool):
         """パイプライン実行情報を表示"""
         print("=" * 70)
         print("Kindle → PDF 変換パイプライン")
@@ -90,8 +95,11 @@ class KindleToPdfPipeline:
         print(f"ページ数: {self.config['num_pages']}")
         print(f"ページ間隔: {self.config['page_delay']}秒")
         print(f"スクリーンショット保存先: {self.config['output_folder']}")
-        print(f"PDF出力先: {self.config.get('pdf_output_folder', 'カレントディレクトリ')}")
+        if not skip_pdf:
+            print(f"PDF出力先: {self.config.get('pdf_output_folder', 'カレントディレクトリ')}")
         print(f"画像一致度閾値: {self.config.get('similarity_threshold', 0.99)}")
+        if not skip_png_to_jpg:
+            print(f"JPG品質: {self.config.get('jpg_quality', 95)}")
         print("-" * 70)
         
         steps = []
@@ -99,7 +107,10 @@ class KindleToPdfPipeline:
             steps.append("1. Kindleスクリーンショット撮影")
         if not skip_duplicates:
             steps.append(f"{len(steps)+1}. 重複画像削除")
-        steps.append(f"{len(steps)+1}. PDF変換")
+        if not skip_png_to_jpg:
+            steps.append(f"{len(steps)+1}. PNG → JPG変換")
+        if not skip_pdf:
+            steps.append(f"{len(steps)+1}. PDF変換")
         
         if dry_run:
             print("【ドライランモード】実際の処理は行いません")
@@ -123,24 +134,30 @@ class KindleToPdfPipeline:
         print("ステップ 1: Kindleスクリーンショット撮影")
         print("=" * 50)
         
+        # 設定ファイルから類似度閾値を取得（デフォルト: 0.99）
+        similarity_threshold = self.config.get("similarity_threshold", 0.99)
+        
+        # kindless.pyを実行するコマンドを構築
+        cmd = [
+            sys.executable, str(self.kindless_script),
+            "--config", self.config_file,
+            "--title", self.config["book_title"],
+            "--pages", str(self.config["num_pages"]),
+            "--delay", str(self.config["page_delay"]),
+            "--output", self.config["output_folder"],
+            "--similarity", str(similarity_threshold)
+        ]
+        
         if dry_run:
             print("【ドライラン】スクリーンショット撮影をシミュレート")
-            print(f"  実行コマンド: python {self.kindless_script}")
-            print(f"  設定: {self.config}")
+            print(f"  実行コマンド: {' '.join(cmd)}")
+            print(f"  類似度閾値: {similarity_threshold:.1%}")
             return True
         
         try:
-            # kindless.pyを実行
-            cmd = [
-                sys.executable, str(self.kindless_script),
-                "--config", self.config_file,
-                "--title", self.config["book_title"],
-                "--pages", str(self.config["num_pages"]),
-                "--delay", str(self.config["page_delay"]),
-                "--output", self.config["output_folder"]
-            ]
             
             print(f"実行コマンド: {' '.join(cmd)}")
+            print(f"類似度閾値: {similarity_threshold:.1%}")
             print("注意: Kindleアプリを開いて最初のページを表示してください")
             
             result = subprocess.run(cmd, check=True, capture_output=False)
@@ -154,6 +171,70 @@ class KindleToPdfPipeline:
                 
         except subprocess.CalledProcessError as e:
             print(f"✗ スクリーンショット撮影でエラーが発生しました: {e}")
+            return False
+        except KeyboardInterrupt:
+            print("✗ ユーザーによって中断されました")
+            return False
+    
+    def run_png_to_jpg_conversion(self, dry_run: bool = False) -> bool:
+        """
+        PNG → JPG変換を実行
+        
+        Args:
+            dry_run: ドライランモード
+            
+        Returns:
+            成功した場合True
+        """
+        print("\n" + "=" * 50)
+        print("ステップ 3: PNG → JPG変換")
+        print("=" * 50)
+        
+        if not dry_run and not self.screenshots_folder.exists():
+            print(f"✗ スクリーンショットフォルダが見つかりません: {self.screenshots_folder}")
+            return False
+        
+        try:
+            # JPG出力フォルダを作成（<book_title>_jpg）
+            jpg_output_folder = Path(self.config["output_folder"]) / f"{self.config['book_title']}_jpg"
+            
+            # JPG品質を設定ファイルから取得（デフォルト: 95）
+            jpg_quality = self.config.get("jpg_quality", 95)
+            
+            if dry_run:
+                print("【ドライラン】PNG → JPG変換をシミュレート")
+                print(f"  入力フォルダ: {self.screenshots_folder}")
+                print(f"  出力フォルダ: {jpg_output_folder}")
+                print(f"  JPG品質: {jpg_quality}")
+                print(f"  元のファイル削除: 無効")
+                return True
+            
+            # 出力フォルダを作成
+            jpg_output_folder.mkdir(parents=True, exist_ok=True)
+            print(f"出力フォルダ: {jpg_output_folder}")
+            print(f"JPG品質: {jpg_quality}")
+            
+            # png_to_jpg.pyを実行（--outputオプションで出力フォルダを指定、--qualityで品質を指定、元のファイルは削除しない）
+            cmd = [
+                sys.executable, str(self.png_to_jpg_script),
+                str(self.screenshots_folder),
+                "--output", str(jpg_output_folder),
+                "--quality", str(jpg_quality)
+            ]
+            
+            print(f"実行コマンド: {' '.join(cmd)}")
+            
+            result = subprocess.run(cmd, check=True, capture_output=False)
+            
+            if result.returncode == 0:
+                print(f"✓ PNG → JPG変換が完了しました（出力先: {jpg_output_folder}）")
+                return True
+            else:
+                print(f"✗ PNG → JPG変換が失敗しました (終了コード: {result.returncode})")
+                return False
+                
+        except subprocess.CalledProcessError as e:
+            print(f"✗ PNG → JPG変換でエラーが発生しました: {e}")
             return False
         except KeyboardInterrupt:
             print("✗ ユーザーによって中断されました")
@@ -224,11 +305,15 @@ class KindleToPdfPipeline:
             成功した場合True
         """
         print("\n" + "=" * 50)
-        print("ステップ 3: PDF変換")
+        print("ステップ 4: PDF変換")
         print("=" * 50)
         
-        if not dry_run and not self.screenshots_folder.exists():
-            print(f"✗ スクリーンショットフォルダが見つかりません: {self.screenshots_folder}")
+        # JPGフォルダが存在する場合はそちらを優先
+        jpg_output_folder = Path(self.config["output_folder"]) / f"{self.config['book_title']}_jpg"
+        input_folder = jpg_output_folder if jpg_output_folder.exists() else self.screenshots_folder
+        
+        if not dry_run and not input_folder.exists():
+            print(f"✗ 入力フォルダが見つかりません: {input_folder}")
             return False
         
         # PDF出力パスを決定
@@ -250,7 +335,7 @@ class KindleToPdfPipeline:
         # PDF変換コマンドを準備
         cmd = [
             sys.executable, str(self.pdf_converter_script),
-            "--input", str(self.screenshots_folder),
+            "--input", str(input_folder),
             "--output", str(output_path),
             "--quality", "95",
             "--yes"  # 確認プロンプトをスキップ
@@ -258,12 +343,16 @@ class KindleToPdfPipeline:
         
         if dry_run:
             print("【ドライラン】PDF変換をシミュレート")
-            print(f"  入力フォルダ: {self.screenshots_folder}")
+            print(f"  入力フォルダ: {input_folder}")
+            if jpg_output_folder.exists():
+                print(f"  （JPGフォルダが存在するため、JPGフォルダを使用します）")
             print(f"  出力ファイル: {output_path}")
             print(f"  実行コマンド: {' '.join(cmd)}")
             return True
         
         try:
+            if jpg_output_folder.exists():
+                print(f"JPGフォルダが存在するため、JPGフォルダからPDFを作成します: {input_folder}")
             print(f"実行コマンド: {' '.join(cmd)}")
             
             result = subprocess.run(cmd, check=True, capture_output=False)
@@ -282,13 +371,15 @@ class KindleToPdfPipeline:
             print("✗ ユーザーによって中断されました")
             return False
     
-    def run_pipeline(self, skip_screenshots: bool = False, skip_duplicates: bool = False, dry_run: bool = False) -> bool:
+    def run_pipeline(self, skip_screenshots: bool = False, skip_png_to_jpg: bool = False, skip_duplicates: bool = False, skip_pdf: bool = False, dry_run: bool = False) -> bool:
         """
         パイプライン全体を実行
         
         Args:
             skip_screenshots: スクリーンショット撮影をスキップ
+            skip_png_to_jpg: PNG → JPG変換をスキップ
             skip_duplicates: 重複削除をスキップ
+            skip_pdf: PDF変換をスキップ
             dry_run: ドライランモード
             
         Returns:
@@ -299,7 +390,7 @@ class KindleToPdfPipeline:
             return False
         
         # パイプライン情報を表示
-        self.print_pipeline_info(skip_screenshots, skip_duplicates, dry_run)
+        self.print_pipeline_info(skip_screenshots, skip_png_to_jpg, skip_duplicates, skip_pdf, dry_run)
         
         if not dry_run:
             print("\n処理を開始します...")
@@ -323,10 +414,21 @@ class KindleToPdfPipeline:
         else:
             print("\nステップ 2: 重複画像削除をスキップしました")
         
-        # ステップ3: PDF変換
-        if not self.run_pdf_conversion(dry_run):
-            print("✗ PDF変換に失敗しました。")
-            return False
+        # ステップ3: PNG → JPG変換
+        if not skip_png_to_jpg:
+            if not self.run_png_to_jpg_conversion(dry_run):
+                print("✗ PNG → JPG変換に失敗しました。処理を中止します。")
+                return False
+        else:
+            print("\nステップ 3: PNG → JPG変換をスキップしました")
+        
+        # ステップ4: PDF変換
+        if not skip_pdf:
+            if not self.run_pdf_conversion(dry_run):
+                print("✗ PDF変換に失敗しました。")
+                return False
+        else:
+            print("\nステップ 4: PDF変換をスキップしました")
         
         # 完了メッセージ
         print("\n" + "=" * 70)
@@ -352,17 +454,23 @@ def parse_arguments():
   # カスタム設定ファイルを使用
   python kindle2pdf.py --config my_config.json
   
-  # スクリーンショットをスキップして重複削除とPDF変換のみ実行
+  # スクリーンショットをスキップしてPNG→JPG変換、重複削除、PDF変換のみ実行
   python kindle2pdf.py --skip-screenshots
+  
+  # PNG → JPG変換をスキップ
+  python kindle2pdf.py --skip-png-to-jpg
   
   # 重複削除をスキップ
   python kindle2pdf.py --skip-duplicates
+  
+  # PDF変換をスキップ
+  python kindle2pdf.py --skip-pdf
   
   # ドライラン（実際の処理は行わない）
   python kindle2pdf.py --dry-run
   
   # 複数オプションの組み合わせ
-  python kindle2pdf.py --skip-screenshots --skip-duplicates --dry-run
+  python kindle2pdf.py --skip-screenshots --skip-png-to-jpg --skip-duplicates --skip-pdf --dry-run
         """
     )
     
@@ -380,9 +488,21 @@ def parse_arguments():
     )
     
     parser.add_argument(
+        "--skip-png-to-jpg",
+        action="store_true",
+        help="PNG → JPG変換をスキップ"
+    )
+    
+    parser.add_argument(
         "--skip-duplicates",
         action="store_true",
         help="重複画像削除をスキップ"
+    )
+    
+    parser.add_argument(
+        "--skip-pdf",
+        action="store_true",
+        help="PDF変換をスキップ"
     )
     
     parser.add_argument(
@@ -406,7 +526,9 @@ def main():
         # パイプラインを実行
         success = pipeline.run_pipeline(
             skip_screenshots=args.skip_screenshots,
+            skip_png_to_jpg=args.skip_png_to_jpg,
             skip_duplicates=args.skip_duplicates,
+            skip_pdf=args.skip_pdf,
             dry_run=args.dry_run
         )
         

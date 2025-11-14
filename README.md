@@ -7,8 +7,10 @@ Kindle本のスクリーンショットを自動で撮影し、PDFに変換す�
 このツールは以下の機能を提供します：
 
 1. **kindless.py** - Kindleアプリのスクリーンショットを自動撮影
-2. **png_to_pdf.py** - 撮影したPNGファイルをPDFに変換
-3. **remove_duplicate_images.py** - 重複画像を自動検出・削除
+2. **remove_duplicate_images.py** - 重複画像を自動検出・削除
+3. **png_to_jpg.py** - PNG画像をJPG画像に変換（ファイルサイズ削減）
+4. **image_to_pdf.py** - 画像ファイル（PNG/JPG）をPDFに変換
+5. **kindle2pdf.py** - 上記処理を統合したパイプラインスクリプト
 
 ## 必要な環境
 
@@ -58,7 +60,8 @@ pip install pyautogui pillow scikit-image
     "num_pages": 100,
     "pdf_output_folder": "/Users/username/Desktop/PDFs",
     "pdf_filename": null,
-    "similarity_threshold": 0.99
+    "similarity_threshold": 0.99,
+    "jpg_quality": 95
 }
 ```
 
@@ -73,17 +76,39 @@ pip install pyautogui pillow scikit-image
 | `pdf_output_folder` | PDF出力先フォルダ | `null`（カレントディレクトリ） | フォルダパス |
 | `pdf_filename` | PDF出力ファイル名 | `null`（book_title.pdf） | ファイル名 |
 | `similarity_threshold` | 重複画像判定の類似度閾値 | `0.99` | 0.0-1.0 |
+| `jpg_quality` | JPG変換時の品質設定 | `95` | 1-100 |
 
 #### 画像一致度閾値について
 
-`similarity_threshold`は重複画像を検出する際の類似度閾値です：
+`similarity_threshold`は以下の2つの用途で使用されます：
 
+1. **スクリーンショット撮影時の自動終了判定**（`kindless.py`）
+   - 前回のスクリーンショットと比較し、同じ画像が10回連続したら自動終了
+   - 本の最後やページめくりが止まった場合に自動停止
+
+2. **重複画像削除時の判定**（`remove_duplicate_images.py`）
+   - 同一ディレクトリ内の画像を比較し、重複を検出・削除
+
+**推奨値**：
 - **0.99（推奨）**: 非常に高精度。ほぼ同一の画像のみを重複と判定
 - **0.95**: 高精度。わずかな違いがある画像も重複と判定
 - **0.90**: 中精度。より多くの類似画像を重複と判定
 - **0.85以下**: 低精度。異なる画像も重複と誤判定する可能性が高い
 
-**注意**: 値を下げすぎると、異なるページの画像も重複として削除される可能性があります。
+**注意**: 
+- 値を下げすぎると、異なるページの画像も重複として削除される可能性があります
+- スクリーンショット撮影時の自動終了機能では、0.99が推奨されます（本の最後を正確に検出するため）
+
+#### JPG品質設定について
+
+`jpg_quality`はPNG画像をJPGに変換する際の圧縮品質を設定します：
+
+- **95（推奨）**: 高品質。ファイルサイズと品質のバランスが良い
+- **85-90**: 中品質。ファイルサイズを抑えつつ、品質を維持
+- **75-80**: 低品質。ファイルサイズを大幅に削減（画質は若干低下）
+- **100**: 最高品質。ファイルサイズが大きくなる
+
+**注意**: 値が高いほど品質は向上しますが、ファイルサイズも大きくなります。一般的には85-95の範囲が推奨されます。
 
 ## 使用方法
 
@@ -92,17 +117,23 @@ pip install pyautogui pillow scikit-image
 全ての処理を一度に実行する統合スクリプトが利用できます：
 
 ```bash
-# 全ての処理を順番に実行（スクリーンショット → 重複削除 → PDF変換）
+# 全ての処理を順番に実行（スクリーンショット → 重複削除 → PNG→JPG変換 → PDF変換）
 python kindle2pdf.py
 
 # ドライランモード（実際の処理は行わず、計画のみ表示）
 python kindle2pdf.py --dry-run
 
-# スクリーンショットをスキップして重複削除とPDF変換のみ実行
+# スクリーンショットをスキップして重複削除、PNG→JPG変換、PDF変換のみ実行
 python kindle2pdf.py --skip-screenshots
+
+# PNG→JPG変換をスキップ
+python kindle2pdf.py --skip-png-to-jpg
 
 # 重複削除をスキップ
 python kindle2pdf.py --skip-duplicates
+
+# PDF変換をスキップ（スクリーンショット、重複削除、PNG→JPG変換のみ実行）
+python kindle2pdf.py --skip-pdf
 
 # カスタム設定ファイルを使用
 python kindle2pdf.py --config my_config.json
@@ -110,12 +141,28 @@ python kindle2pdf.py --config my_config.json
 
 #### 統合パイプラインの特徴
 
-- **自動化**: 3つの処理を順番に自動実行
+- **自動化**: 4つの処理を順番に自動実行
+  1. Kindleスクリーンショット撮影（PNG形式）
+     - 画像比較による自動終了機能（10回連続で同じ画像が続いたら終了）
+     - `config.json`の`similarity_threshold`を自動的に`kindless.py`に渡す
+  2. 重複画像削除
+     - `config.json`の`similarity_threshold`を使用
+  3. PNG → JPG変換（`<book_title>_jpg`フォルダに保存、元のPNGファイルは保持）
+     - `config.json`の`jpg_quality`を使用
+  4. PDF変換（JPGフォルダが存在する場合はJPGフォルダから、存在しない場合は元のスクリーンショットフォルダから）
 - **設定ファイル連携**: `config.json`から全ての設定を自動読み込み
+  - `similarity_threshold`: スクリーンショット撮影と重複削除の両方で使用
+  - `jpg_quality`: PNG → JPG変換時の品質設定
+  - その他の設定（`book_title`, `page_delay`, `num_pages`など）も自動適用
 - **エラーハンドリング**: 各ステップでのエラー検出と適切な停止
 - **進捗表示**: 各ステップの実行状況を詳細表示
 - **柔軟性**: 必要に応じて特定のステップをスキップ可能
-- **ドライラン**: 実際の処理前に実行計画を確認
+  - `--skip-screenshots`: スクリーンショット撮影をスキップ
+  - `--skip-png-to-jpg`: PNG → JPG変換をスキップ
+  - `--skip-duplicates`: 重複画像削除をスキップ
+  - `--skip-pdf`: PDF変換をスキップ
+- **ドライラン**: 実際の処理前に実行計画を確認（`--dry-run`）
+- **JPGフォルダ管理**: PNG → JPG変換時に`<book_title>_jpg`フォルダを自動作成し、元のPNGファイルは保持
 
 ### 個別スクリプトの使用方法
 
@@ -131,21 +178,72 @@ python kindless.py -t "本のタイトル" -p 100 -d 2
 - `-d, --delay`: ページめくり後の待機時間（秒）
 - `-o, --output`: 出力フォルダのパス
 - `-c, --config`: 設定ファイルのパス
+- `-s, --similarity`: 画像類似度の閾値（0.0-1.0、デフォルト: 0.99）
 
-#### 2. PDF変換
+使用例：
+```bash
+# 基本的な使用方法
+python kindless.py -t "マイブック" -p 100 -d 3
+
+# 類似度95%で判定（より緩い判定）
+python kindless.py -t "マイブック" -s 0.95
+
+# 設定ファイルを使用
+python kindless.py --config config.json
+
+# 類似度とその他のオプションを組み合わせ
+python kindless.py -t "小説" --pages 50 --delay 1 --similarity 0.98
+```
+
+##### スクリーンショット撮影の特徴
+
+- **自動終了機能**: スクリーンショットを1つ取るたびに前回の画像と比較し、10回連続で同じ画像が続いたら自動終了
+- **SSIMベースの画像比較**: `remove_duplicate_images.py`と同じSSIM（構造的類似性指数）を使用した高精度な画像比較
+- **類似度閾値の設定**: `--similarity`オプションまたは`config.json`の`similarity_threshold`で類似度を調整可能
+- **OS別のページめくり**: macOS/Windows/Linuxで最適なページめくり方法を自動選択
+- **フェイルセーフ機能**: マウスを画面左上角に移動すると処理が停止
+
+#### 2. PNG → JPG変換
 
 ```bash
-python png_to_pdf.py -i /path/to/screenshots -o output.pdf
+python png_to_jpg.py /path/to/png/folder
 ```
 
 オプション：
-- `-i, --input`: PNGファイルが格納されているフォルダ
-- `-o, --output`: 出力PDFファイルのパス
+- `input_folder`: PNGファイルが格納されているフォルダ（位置引数）
+- `-o, --output`: 出力フォルダパス（指定しない場合は入力フォルダと同じ場所）
+- `-q, --quality`: JPEG品質（1-100、デフォルト: 95）
+- `-d, --delete-original`: 変換後に元のPNGファイルを削除
 - `-p, --pattern`: ファイル名パターン（デフォルト: *.png）
+
+使用例：
+```bash
+# 基本的な使用方法（同一ディレクトリにJPGを保存）
+python png_to_jpg.py ./screenshots
+
+# 出力フォルダを指定
+python png_to_jpg.py ./screenshots --output ./converted
+
+# 品質を指定して変換後、元のPNGを削除
+python png_to_jpg.py ./screenshots --quality 90 --delete-original
+```
+
+#### 3. PDF変換
+
+```bash
+python image_to_pdf.py -i /path/to/images -o output.pdf
+```
+
+オプション：
+- `-i, --input`: 画像ファイル（PNG/JPG）が格納されているフォルダ
+- `-o, --output`: 出力PDFファイルのパス
+- `-p, --pattern`: ファイル名パターン（デフォルト: *.pngと*.jpgの両方を検索）
 - `-q, --quality`: PDF品質（1-100、デフォルト: 95）
 - `-y, --yes`: 確認プロンプトをスキップ
 
-#### 3. 重複画像削除
+**注意**: `image_to_pdf.py`はPNGとJPGの両方の画像形式に対応しています。パターンが指定されていない場合、フォルダ内のPNGとJPGファイルの両方を自動的に検索します。
+
+#### 4. 重複画像削除
 
 ```bash
 python remove_duplicate_images.py --dry-run
@@ -209,8 +307,10 @@ macOSでは以下の権限設定が必要です：
 4. **ページめくり方法**: 
    - macOS: スペースキー → 右矢印キー → 画面右側クリック
    - Windows: 右矢印キー → スペースキー → 画面右側クリック → PageDownキー
-5. **連続エラー**: 3回連続でエラーが発生すると自動停止します
-6. **無限ループ防止**: 2000ページを超えると強制終了します
+5. **自動終了機能**: スクリーンショットを1つ取るたびに前回の画像と比較し、10回連続で同じ画像が続いたら自動終了します（本の最後を検出）
+6. **連続エラー**: 3回連続でエラーが発生すると自動停止します
+7. **無限ループ防止**: 2000ページを超えると強制終了します
+8. **類似度閾値の設定**: `config.json`の`similarity_threshold`を調整することで、自動終了の感度を変更できます（デフォルト: 0.99）
 
 ### パス指定時の注意（重要）
 
@@ -220,13 +320,13 @@ macOSでは以下の権限設定が必要です：
 
 ```bash
 # ❌ 間違った例（チルダが正しく展開されない場合があります）
-python png_to_pdf.py --input ~/Documents/BookTitle --output ~/Documents/BookTitle.pdf
+python image_to_pdf.py --input ~/Documents/BookTitle --output ~/Documents/BookTitle.pdf
 
 # ✅ 正しい例（絶対パスを使用）
-python png_to_pdf.py --input /Users/username/Documents/BookTitle --output /Users/username/Documents/BookTitle.pdf
+python image_to_pdf.py --input /Users/username/Documents/BookTitle --output /Users/username/Documents/BookTitle.pdf
 
 # ✅ または相対パスを使用
-python png_to_pdf.py --input ../Documents/BookTitle --output ../Documents/BookTitle.pdf
+python image_to_pdf.py --input ../Documents/BookTitle --output ../Documents/BookTitle.pdf
 ```
 
 **問題の詳細:**
@@ -240,9 +340,29 @@ python png_to_pdf.py --input ../Documents/BookTitle --output ../Documents/BookTi
 
 ### ファイル形式とサイズ
 
-- スクリーンショット: PNG形式
+- スクリーンショット: PNG形式（`<book_title>`フォルダに保存）
+- 中間形式: JPG形式（`<book_title>_jpg`フォルダに保存、元のPNGファイルは保持）
 - 出力PDF: RGB形式（アルファチャンネルは白背景に変換）
-- ファイル名: `page_0001.png`, `page_0002.png`...の連番形式
+- ファイル名: `page_0001.png` → `page_0001.jpg` → PDFに統合
+
+**パイプラインの処理フロー:**
+1. PNGスクリーンショット撮影（`<book_title>`フォルダ）
+2. 重複PNG画像の削除
+3. PNG → JPG変換（`<book_title>_jpg`フォルダに保存、元のPNGファイルは保持）
+4. PDF変換（`<book_title>_jpg`フォルダが存在する場合はJPGフォルダから、存在しない場合は元のスクリーンショットフォルダから）
+
+**フォルダ構造の例:**
+```
+output_folder/
+├── 本のタイトル/          # スクリーンショット（PNG）
+│   ├── page_0001.png
+│   ├── page_0002.png
+│   └── ...
+└── 本のタイトル_jpg/      # JPG変換後（元のPNGは保持）
+    ├── page_0001.jpg
+    ├── page_0002.jpg
+    └── ...
+```
 
 ## トラブルシューティング
 

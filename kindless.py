@@ -5,6 +5,9 @@ import sys
 import argparse
 import json
 import platform
+from PIL import Image
+import numpy as np
+from skimage.metrics import structural_similarity as ssim
 
 # OS自動判定
 CURRENT_OS = platform.system().lower()
@@ -81,7 +84,8 @@ def load_config(config_file=None):
         "output_folder": os.path.join(os.path.expanduser("~"), "Documents"),
         "book_title": "KindleBook",
         "page_delay": 2,
-        "num_pages": 100
+        "num_pages": 100,
+        "similarity_threshold": 0.99
     }
     
     if config_file and os.path.exists(config_file):
@@ -104,7 +108,72 @@ def load_config(config_file=None):
     
     return default_config
 
-def capture_kindle_screenshots(book_title="KindleBook", page_delay=2, num_pages=None, output_folder=None):
+def load_and_resize_image(image_path, target_size=(256, 256)):
+    """
+    画像を読み込み、比較用にリサイズ・グレースケール変換
+    
+    Args:
+        image_path: 画像ファイルのパス
+        target_size: リサイズ後のサイズ
+        
+    Returns:
+        グレースケール画像の配列、失敗時はNone
+    """
+    try:
+        with Image.open(image_path) as img:
+            # RGBAの場合はRGBに変換
+            if img.mode == 'RGBA':
+                # 白背景で合成
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1])
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # リサイズ
+            img = img.resize(target_size, Image.Resampling.LANCZOS)
+            
+            # グレースケールに変換
+            img_gray = img.convert('L')
+            
+            # numpy配列に変換
+            return np.array(img_gray)
+            
+    except Exception as e:
+        print(f"画像の読み込みに失敗しました: {image_path} - {e}")
+        return None
+
+def compare_images(image_path1, image_path2, similarity_threshold=0.99):
+    """
+    2つの画像の類似度をSSIMで計算し、閾値以上かどうかを判定する関数
+    
+    Args:
+        image_path1 (str): 比較する画像1のパス
+        image_path2 (str): 比較する画像2のパス
+        similarity_threshold (float): 類似度の閾値（0.0-1.0、デフォルト: 0.99）
+    Returns:
+        bool: 類似度が閾値以上の場合True、未満の場合False
+    """
+    try:
+        if not os.path.exists(image_path1) or not os.path.exists(image_path2):
+            return False
+        
+        # 画像を読み込み、リサイズ・グレースケール変換
+        img1 = load_and_resize_image(image_path1)
+        img2 = load_and_resize_image(image_path2)
+        
+        if img1 is None or img2 is None:
+            return False
+        
+        # SSIMを計算
+        similarity = ssim(img1, img2, data_range=255)
+        
+        return similarity >= similarity_threshold
+    except Exception as e:
+        print(f"画像比較エラー: {e}")
+        return False
+
+def capture_kindle_screenshots(book_title="KindleBook", page_delay=2, num_pages=None, output_folder=None, similarity_threshold=0.99):
     """
     Kindle本のスクリーンショットを自動化する関数（macOS対応版）
     Args:
@@ -112,6 +181,7 @@ def capture_kindle_screenshots(book_title="KindleBook", page_delay=2, num_pages=
         page_delay (int, optional): ページをめくる操作後の待機時間（秒）。デフォルトは 2 秒。
         num_pages (int, optional): キャプチャするページ数。None の場合は、指定された方法でページめくりが止まるまでキャプチャを続ける。
         output_folder (str, optional): 保存先のベースフォルダ。指定されない場合はデフォルトを使用。
+        similarity_threshold (float, optional): 画像類似度の閾値（0.0-1.0）。デフォルトは 0.99。
     """
     # 権限チェック
     if not check_permissions():
@@ -189,6 +259,9 @@ def capture_kindle_screenshots(book_title="KindleBook", page_delay=2, num_pages=
 
     page_count = 0
     consecutive_failures = 0
+    previous_screenshot_path = None
+    consecutive_same_images = 0
+    max_consecutive_same = 10  # 同じ画像が連続する最大回数
     
     while True:
         page_count += 1
@@ -217,6 +290,21 @@ def capture_kindle_screenshots(book_title="KindleBook", page_delay=2, num_pages=
                     print(f"  保存先: {screenshot_path}")
                     print(f"  ファイルサイズ: {file_size:,} bytes")
                     consecutive_failures = 0  # 成功したらカウンターをリセット
+                    
+                    # 前回の画像と比較
+                    if previous_screenshot_path is not None:
+                        if compare_images(previous_screenshot_path, screenshot_path, similarity_threshold):
+                            consecutive_same_images += 1
+                            print(f"  ⚠ 前回の画像と類似しています（連続: {consecutive_same_images}/{max_consecutive_same}回、閾値: {similarity_threshold:.1%}）")
+                            if consecutive_same_images >= max_consecutive_same:
+                                print(f"\n同じ画像が{max_consecutive_same}回連続しました。キャプチャを終了します。")
+                                break
+                        else:
+                            consecutive_same_images = 0  # 異なる画像ならカウンターをリセット
+                            print(f"  ✓ 新しい画像です")
+                    
+                    # 現在の画像を前回の画像として保存
+                    previous_screenshot_path = screenshot_path
                 else:
                     print(f"✗ エラー: ファイルサイズが0です: {screenshot_path}")
                     consecutive_failures += 1
@@ -328,6 +416,7 @@ def parse_arguments():
   python kindless.py --title "小説" --pages 50 --delay 1
   python kindless.py -o "/Users/username/Desktop/Screenshots" -t "本のタイトル"
   python kindless.py --output "/path/to/folder" --config config.json
+  python kindless.py -s 0.95 --similarity 0.98
         """
     )
     
@@ -364,6 +453,13 @@ def parse_arguments():
         help="出力フォルダのパス。指定しない場合は設定ファイルまたはデフォルト（~/Documents）を使用"
     )
     
+    parser.add_argument(
+        "-s", "--similarity",
+        type=float,
+        default=None,
+        help="画像類似度の閾値（0.0-1.0）。デフォルト: 0.99"
+    )
+    
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -382,6 +478,15 @@ if __name__ == "__main__":
     book_title = args.title if args.title != "KindleBook" else config.get("book_title", "KindleBook")
     page_delay = args.delay if args.delay != 2 else config.get("page_delay", 2)
     num_pages = args.pages if args.pages != 100 else config.get("num_pages", 100)
+    
+    # 類似度の優先度: コマンドライン引数 > 設定ファイル > デフォルト
+    if args.similarity is not None:
+        similarity_threshold = args.similarity
+        if not 0.0 <= similarity_threshold <= 1.0:
+            print("エラー: 類似度閾値は0.0から1.0の間で指定してください。")
+            sys.exit(1)
+    else:
+        similarity_threshold = config.get("similarity_threshold", 0.99)
     
     # 出力フォルダの優先度: コマンドライン引数 > 設定ファイル > デフォルト
     print(f"\n出力フォルダの決定:")
@@ -405,6 +510,7 @@ if __name__ == "__main__":
     print(f"本のタイトル: {book_title}")
     print(f"ページ数: {num_pages}")
     print(f"ページ間隔: {page_delay}秒")
+    print(f"類似度閾値: {similarity_threshold:.1%}")
     print(f"保存先: {output_folder}")
     print("=" * 50)
     
@@ -413,7 +519,8 @@ if __name__ == "__main__":
             book_title=book_title,
             page_delay=page_delay,
             num_pages=num_pages,
-            output_folder=output_folder
+            output_folder=output_folder,
+            similarity_threshold=similarity_threshold
         )
         print("\n" + "=" * 50)
         print("✓ 処理が正常に完了しました。")

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-連番PNGファイルをPDFに変換するスクリプト
+連番画像ファイル（PNG/JPG）をPDFに変換するスクリプト
 
 使用例:
-    python png_to_pdf.py -i /path/to/png/folder -o output.pdf
-    python png_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o book.pdf
-    python png_to_pdf.py --input ./images --output combined.pdf --pattern "page_*.png"
+    python image_to_pdf.py -i /path/to/image/folder -o output.pdf
+    python image_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o book.pdf
+    python image_to_pdf.py --input ./images --output combined.pdf --pattern "page_*.png"
+    python image_to_pdf.py --input ./images --output combined.pdf --pattern "*.jpg"
 """
 
 import os
@@ -23,16 +24,16 @@ def natural_sort_key(text):
     """
     return [int(c) if c.isdigit() else c.lower() for c in re.split('([0-9]+)', text)]
 
-def find_png_files(input_folder, pattern="*.png"):
+def find_image_files(input_folder, pattern=None):
     """
-    指定されたフォルダから連番PNGファイルを検索
+    指定されたフォルダから連番画像ファイル（PNG/JPG）を検索
     
     Args:
         input_folder (str): 検索対象のフォルダパス
-        pattern (str): ファイル名パターン（デフォルト: "*.png"）
+        pattern (str): ファイル名パターン（Noneの場合は*.pngと*.jpgを検索）
     
     Returns:
-        list: ソートされたPNGファイルパスのリスト
+        list: ソートされた画像ファイルパスのリスト
     """
     if not os.path.exists(input_folder):
         raise FileNotFoundError(f"入力フォルダが見つかりません: {input_folder}")
@@ -40,37 +41,45 @@ def find_png_files(input_folder, pattern="*.png"):
     if not os.path.isdir(input_folder):
         raise NotADirectoryError(f"指定されたパスはフォルダではありません: {input_folder}")
     
-    # パターンに基づいてファイルを検索
-    search_pattern = os.path.join(input_folder, pattern)
-    png_files = glob.glob(search_pattern)
+    # パターンが指定されていない場合は、PNGとJPGの両方を検索
+    if pattern is None:
+        patterns = ["*.png", "*.jpg", "*.jpeg"]
+    else:
+        patterns = [pattern]
     
-    # PNGファイルのみをフィルタリング
-    png_files = [f for f in png_files if f.lower().endswith('.png')]
+    image_files = []
+    for pat in patterns:
+        search_pattern = os.path.join(input_folder, pat)
+        found_files = glob.glob(search_pattern)
+        image_files.extend(found_files)
     
-    if not png_files:
-        raise FileNotFoundError(f"PNGファイルが見つかりません: {search_pattern}")
+    # PNG/JPG/JPEGファイルのみをフィルタリング
+    image_files = [f for f in image_files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    
+    if not image_files:
+        raise FileNotFoundError(f"画像ファイル（PNG/JPG）が見つかりません: {input_folder}")
     
     # 自然順序でソート
-    png_files.sort(key=natural_sort_key)
+    image_files.sort(key=natural_sort_key)
     
-    print(f"見つかったPNGファイル数: {len(png_files)}")
-    print(f"最初のファイル: {os.path.basename(png_files[0])}")
-    print(f"最後のファイル: {os.path.basename(png_files[-1])}")
+    print(f"見つかった画像ファイル数: {len(image_files)}")
+    print(f"最初のファイル: {os.path.basename(image_files[0])}")
+    print(f"最後のファイル: {os.path.basename(image_files[-1])}")
     
-    return png_files
+    return image_files
 
-def convert_png_to_pdf(png_files, output_pdf, quality=95, optimize=True):
+def convert_images_to_pdf(image_files, output_pdf, quality=95, optimize=True):
     """
-    PNGファイルリストをPDFに変換
+    画像ファイルリスト（PNG/JPG）をPDFに変換
     
     Args:
-        png_files (list): PNGファイルパスのリスト
+        image_files (list): 画像ファイルパスのリスト（PNG/JPG）
         output_pdf (str): 出力PDFファイルパス
         quality (int): JPEG品質（1-100、デフォルト: 95）
         optimize (bool): PDF最適化を行うか（デフォルト: True）
     """
-    if not png_files:
-        raise ValueError("変換するPNGファイルがありません")
+    if not image_files:
+        raise ValueError("変換する画像ファイルがありません")
     
     print(f"PDF変換を開始します...")
     print(f"出力ファイル: {output_pdf}")
@@ -80,12 +89,12 @@ def convert_png_to_pdf(png_files, output_pdf, quality=95, optimize=True):
     images = []
     failed_files = []
     
-    for i, png_file in enumerate(png_files, 1):
+    for i, image_file in enumerate(image_files, 1):
         try:
-            print(f"処理中 ({i}/{len(png_files)}): {os.path.basename(png_file)}")
+            print(f"処理中 ({i}/{len(image_files)}): {os.path.basename(image_file)}")
             
             # 画像を開く
-            img = Image.open(png_file)
+            img = Image.open(image_file)
             
             # RGBAモードの場合はRGBに変換（PDFはアルファチャンネルをサポートしない）
             if img.mode in ('RGBA', 'LA'):
@@ -102,8 +111,8 @@ def convert_png_to_pdf(png_files, output_pdf, quality=95, optimize=True):
             images.append(img)
             
         except Exception as e:
-            print(f"✗ エラー: {png_file} の読み込みに失敗しました: {e}")
-            failed_files.append(png_file)
+            print(f"✗ エラー: {image_file} の読み込みに失敗しました: {e}")
+            failed_files.append(image_file)
             continue
     
     if not images:
@@ -184,21 +193,22 @@ def parse_arguments():
     コマンドライン引数を解析
     """
     parser = argparse.ArgumentParser(
-        description="連番PNGファイルをPDFに変換するツール",
+        description="連番画像ファイル（PNG/JPG）をPDFに変換するツール",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  python png_to_pdf.py -i /path/to/png/folder -o output.pdf
-  python png_to_pdf.py -i ./screenshots -o book.pdf --pattern "page_*.png"
-  python png_to_pdf.py --config config.json -y  # 設定ファイルから自動設定（確認なし）
-  python png_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o MyBook.pdf -y
+  python image_to_pdf.py -i /path/to/image/folder -o output.pdf
+  python image_to_pdf.py -i ./screenshots -o book.pdf --pattern "page_*.png"
+  python image_to_pdf.py -i ./screenshots -o book.pdf --pattern "*.jpg"
+  python image_to_pdf.py --config config.json -y  # 設定ファイルから自動設定（確認なし）
+  python image_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o MyBook.pdf -y
         """
     )
     
     parser.add_argument(
         "-i", "--input",
         type=str,
-        help="PNGファイルが格納されているフォルダパス"
+        help="画像ファイル（PNG/JPG）が格納されているフォルダパス"
     )
     
     parser.add_argument(
@@ -210,8 +220,8 @@ def parse_arguments():
     parser.add_argument(
         "-p", "--pattern",
         type=str,
-        default="*.png",
-        help="ファイル名パターン（デフォルト: *.png）"
+        default=None,
+        help="ファイル名パターン（デフォルト: *.pngと*.jpgの両方を検索）"
     )
     
     parser.add_argument(
@@ -290,20 +300,20 @@ def main():
             print(f"出力ファイル名を自動設定: {output_pdf}")
         
         print("=" * 60)
-        print("PNG → PDF 変換ツール")
+        print("画像 → PDF 変換ツール（PNG/JPG対応）")
         print("=" * 60)
         print(f"入力フォルダ: {input_folder}")
         print(f"出力ファイル: {output_pdf}")
-        print(f"ファイルパターン: {args.pattern}")
+        print(f"ファイルパターン: {args.pattern if args.pattern else '*.png, *.jpg, *.jpeg'}")
         print(f"品質設定: {args.quality}")
         print(f"最適化: {'無効' if args.no_optimize else '有効'}")
         print("=" * 60)
         
-        # PNGファイルを検索
-        png_files = find_png_files(input_folder, args.pattern)
+        # 画像ファイルを検索（PNG/JPG対応）
+        image_files = find_image_files(input_folder, args.pattern)
         
         # 確認プロンプト（--yesオプションでスキップ可能）
-        print(f"\n{len(png_files)}個のPNGファイルをPDFに変換します。")
+        print(f"\n{len(image_files)}個の画像ファイルをPDFに変換します。")
         if not args.yes:
             response = input("続行しますか？ (y/N): ").strip().lower()
             if response not in ['y', 'yes', 'はい']:
@@ -313,8 +323,8 @@ def main():
             print("自動実行モードで続行します。")
         
         # PDF変換を実行
-        convert_png_to_pdf(
-            png_files=png_files,
+        convert_images_to_pdf(
+            image_files=image_files,
             output_pdf=output_pdf,
             quality=args.quality,
             optimize=not args.no_optimize
