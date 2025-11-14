@@ -97,6 +97,9 @@ class KindleToPdfPipeline:
         print(f"スクリーンショット保存先: {self.config['output_folder']}")
         if not skip_pdf:
             print(f"PDF出力先: {self.config.get('pdf_output_folder', 'カレントディレクトリ')}")
+            pages_per_pdf = self.config.get('pages_per_pdf')
+            if pages_per_pdf:
+                print(f"PDF分割設定: {pages_per_pdf}ページごとに分割")
         print(f"画像一致度閾値: {self.config.get('similarity_threshold', 0.99)}")
         if not skip_png_to_jpg:
             print(f"JPG品質: {self.config.get('jpg_quality', 95)}")
@@ -341,18 +344,27 @@ class KindleToPdfPipeline:
             "--yes"  # 確認プロンプトをスキップ
         ]
         
+        # 設定ファイルから pages_per_pdf を取得して追加
+        pages_per_pdf = self.config.get('pages_per_pdf')
+        if pages_per_pdf:
+            cmd.extend(["--pages-per-pdf", str(pages_per_pdf)])
+        
         if dry_run:
             print("【ドライラン】PDF変換をシミュレート")
             print(f"  入力フォルダ: {input_folder}")
             if jpg_output_folder.exists():
                 print(f"  （JPGフォルダが存在するため、JPGフォルダを使用します）")
             print(f"  出力ファイル: {output_path}")
+            if pages_per_pdf:
+                print(f"  分割設定: {pages_per_pdf}ページごとに分割")
             print(f"  実行コマンド: {' '.join(cmd)}")
             return True
         
         try:
             if jpg_output_folder.exists():
                 print(f"JPGフォルダが存在するため、JPGフォルダからPDFを作成します: {input_folder}")
+            if pages_per_pdf:
+                print(f"分割設定: {pages_per_pdf}ページごとにPDFを分割します")
             print(f"実行コマンド: {' '.join(cmd)}")
             
             result = subprocess.run(cmd, check=True, capture_output=False)

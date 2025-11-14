@@ -61,7 +61,8 @@ pip install pyautogui pillow scikit-image
     "pdf_output_folder": "/Users/username/Desktop/PDFs",
     "pdf_filename": null,
     "similarity_threshold": 0.99,
-    "jpg_quality": 95
+    "jpg_quality": 95,
+    "pages_per_pdf": 50
 }
 ```
 
@@ -77,6 +78,7 @@ pip install pyautogui pillow scikit-image
 | `pdf_filename` | PDF出力ファイル名 | `null`（book_title.pdf） | ファイル名 |
 | `similarity_threshold` | 重複画像判定の類似度閾値 | `0.99` | 0.0-1.0 |
 | `jpg_quality` | JPG変換時の品質設定 | `95` | 1-100 |
+| `pages_per_pdf` | 1つのPDFあたりのページ数（分割設定） | `null`（分割しない） | 正の整数 |
 
 #### 画像一致度閾値について
 
@@ -109,6 +111,20 @@ pip install pyautogui pillow scikit-image
 - **100**: 最高品質。ファイルサイズが大きくなる
 
 **注意**: 値が高いほど品質は向上しますが、ファイルサイズも大きくなります。一般的には85-95の範囲が推奨されます。
+
+#### PDF分割設定について
+
+`pages_per_pdf`は、PDF変換時に指定ページ数ごとにPDFファイルを分割する機能です：
+
+- **設定しない場合（`null`）**: すべての画像を1つのPDFファイルに変換します
+- **設定した場合**: 指定したページ数ごとにPDFファイルを分割します
+  - 例: `pages_per_pdf: 50` を設定し、150ページの画像を変換すると、`book_1.pdf`（50ページ）、`book_2.pdf`（50ページ）、`book_3.pdf`（50ページ）の3つのPDFが作成されます
+  - 出力ファイル名は自動的に連番が追加されます（`<出力ファイル名>_1.pdf`, `<出力ファイル名>_2.pdf`など）
+
+**使用例**:
+- 大きな本を複数のPDFに分割して管理したい場合
+- ファイルサイズを小さくして扱いやすくしたい場合
+- 特定のページ範囲だけを共有したい場合
 
 ## 使用方法
 
@@ -153,6 +169,7 @@ python kindle2pdf.py --config my_config.json
 - **設定ファイル連携**: `config.json`から全ての設定を自動読み込み
   - `similarity_threshold`: スクリーンショット撮影と重複削除の両方で使用
   - `jpg_quality`: PNG → JPG変換時の品質設定
+  - `pages_per_pdf`: PDF分割設定（指定ページ数ごとにPDFを分割）
   - その他の設定（`book_title`, `page_delay`, `num_pages`など）も自動適用
 - **エラーハンドリング**: 各ステップでのエラー検出と適切な停止
 - **進捗表示**: 各ステップの実行状況を詳細表示
@@ -239,9 +256,22 @@ python image_to_pdf.py -i /path/to/images -o output.pdf
 - `-o, --output`: 出力PDFファイルのパス
 - `-p, --pattern`: ファイル名パターン（デフォルト: *.pngと*.jpgの両方を検索）
 - `-q, --quality`: PDF品質（1-100、デフォルト: 95）
+- `--pages-per-pdf`: 1つのPDFあたりのページ数（指定すると指定ページ数ごとにPDFを分割）
 - `-y, --yes`: 確認プロンプトをスキップ
 
 **注意**: `image_to_pdf.py`はPNGとJPGの両方の画像形式に対応しています。パターンが指定されていない場合、フォルダ内のPNGとJPGファイルの両方を自動的に検索します。
+
+**PDF分割機能**:
+```bash
+# 50ページごとにPDFを分割
+python image_to_pdf.py -i ./images -o book.pdf --pages-per-pdf 50
+
+# 100ページごとにPDFを分割
+python image_to_pdf.py -i ./images -o output.pdf --pages-per-pdf 100
+```
+
+分割時は、出力ファイル名に自動的に連番が追加されます：
+- `book.pdf` → `book_1.pdf`, `book_2.pdf`, `book_3.pdf` など
 
 #### 4. 重複画像削除
 

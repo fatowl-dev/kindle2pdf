@@ -7,6 +7,7 @@
     python image_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o book.pdf
     python image_to_pdf.py --input ./images --output combined.pdf --pattern "page_*.png"
     python image_to_pdf.py --input ./images --output combined.pdf --pattern "*.jpg"
+    python image_to_pdf.py -i ./images -o book.pdf --pages-per-pdf 50  # 50ページごとに分割
 """
 
 import os
@@ -68,21 +69,24 @@ def find_image_files(input_folder, pattern=None):
     
     return image_files
 
-def convert_images_to_pdf(image_files, output_pdf, quality=95, optimize=True):
+def convert_images_to_pdf(image_files, output_pdf, quality=95, optimize=True, pages_per_pdf=None):
     """
     画像ファイルリスト（PNG/JPG）をPDFに変換
     
     Args:
         image_files (list): 画像ファイルパスのリスト（PNG/JPG）
-        output_pdf (str): 出力PDFファイルパス
+        output_pdf (str): 出力PDFファイルパス（分割時はベース名として使用）
         quality (int): JPEG品質（1-100、デフォルト: 95）
         optimize (bool): PDF最適化を行うか（デフォルト: True）
+        pages_per_pdf (int): 1つのPDFあたりのページ数（Noneの場合は全ページを1つのPDFに）
     """
     if not image_files:
         raise ValueError("変換する画像ファイルがありません")
     
     print(f"PDF変換を開始します...")
     print(f"出力ファイル: {output_pdf}")
+    if pages_per_pdf:
+        print(f"分割設定: {pages_per_pdf}ページごとに分割")
     print(f"品質設定: {quality}")
     print(f"最適化: {'有効' if optimize else '無効'}")
     
@@ -123,34 +127,89 @@ def convert_images_to_pdf(image_files, output_pdf, quality=95, optimize=True):
         for failed_file in failed_files:
             print(f"  - {os.path.basename(failed_file)}")
     
+    # 出力ディレクトリが存在しない場合は作成
+    output_dir = os.path.dirname(output_pdf)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
+    # 出力ファイル名のベース名と拡張子を取得
+    base_name, ext = os.path.splitext(output_pdf)
+    if not ext:
+        ext = '.pdf'
+    
     try:
-        # PDFとして保存
-        print(f"\nPDFファイルを作成中...")
+        # ページ数ごとに分割する場合
+        if pages_per_pdf and pages_per_pdf > 0:
+            total_pages = len(images)
+            num_pdfs = (total_pages + pages_per_pdf - 1) // pages_per_pdf  # 切り上げ
+            
+            print(f"\n{total_pages}ページを{num_pdfs}個のPDFファイルに分割します...")
+            
+            created_files = []
+            for pdf_num in range(num_pdfs):
+                start_idx = pdf_num * pages_per_pdf
+                end_idx = min(start_idx + pages_per_pdf, total_pages)
+                chunk_images = images[start_idx:end_idx]
+                
+                # 出力ファイル名を生成（連番を追加）
+                if num_pdfs > 1:
+                    chunk_output_pdf = f"{base_name}_{pdf_num + 1}{ext}"
+                else:
+                    chunk_output_pdf = output_pdf
+                
+                print(f"\nPDF {pdf_num + 1}/{num_pdfs} を作成中...")
+                print(f"  ページ範囲: {start_idx + 1} - {end_idx}")
+                print(f"  出力ファイル: {chunk_output_pdf}")
+                
+                # PDFとして保存
+                if len(chunk_images) > 0:
+                    chunk_images[0].save(
+                        chunk_output_pdf,
+                        save_all=True,
+                        append_images=chunk_images[1:] if len(chunk_images) > 1 else [],
+                        format='PDF',
+                        optimize=optimize,
+                        quality=quality
+                    )
+                    
+                    # ファイルサイズを確認
+                    if os.path.exists(chunk_output_pdf):
+                        file_size = os.path.getsize(chunk_output_pdf)
+                        print(f"  ✓ PDF作成完了!")
+                        print(f"    サイズ: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
+                        print(f"    ページ数: {len(chunk_images)}")
+                        created_files.append(chunk_output_pdf)
+                    else:
+                        raise RuntimeError(f"PDFファイルが作成されませんでした: {chunk_output_pdf}")
+            
+            print(f"\n✓ 全{num_pdfs}個のPDFファイルの作成が完了しました！")
+            print(f"  作成されたファイル:")
+            for created_file in created_files:
+                print(f"    - {created_file}")
         
-        # 出力ディレクトリが存在しない場合は作成
-        output_dir = os.path.dirname(output_pdf)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-        
-        # 最初の画像を使ってPDFを作成し、残りの画像を追加
-        images[0].save(
-            output_pdf,
-            save_all=True,
-            append_images=images[1:],
-            format='PDF',
-            optimize=optimize,
-            quality=quality
-        )
-        
-        # ファイルサイズを確認
-        if os.path.exists(output_pdf):
-            file_size = os.path.getsize(output_pdf)
-            print(f"✓ PDF作成完了!")
-            print(f"  ファイル: {output_pdf}")
-            print(f"  サイズ: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
-            print(f"  ページ数: {len(images)}")
         else:
-            raise RuntimeError("PDFファイルが作成されませんでした")
+            # 分割しない場合（従来の動作）
+            print(f"\nPDFファイルを作成中...")
+            
+            # 最初の画像を使ってPDFを作成し、残りの画像を追加
+            images[0].save(
+                output_pdf,
+                save_all=True,
+                append_images=images[1:],
+                format='PDF',
+                optimize=optimize,
+                quality=quality
+            )
+            
+            # ファイルサイズを確認
+            if os.path.exists(output_pdf):
+                file_size = os.path.getsize(output_pdf)
+                print(f"✓ PDF作成完了!")
+                print(f"  ファイル: {output_pdf}")
+                print(f"  サイズ: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
+                print(f"  ページ数: {len(images)}")
+            else:
+                raise RuntimeError("PDFファイルが作成されませんでした")
             
     except Exception as e:
         raise RuntimeError(f"PDF作成に失敗しました: {e}")
@@ -202,6 +261,7 @@ def parse_arguments():
   python image_to_pdf.py -i ./screenshots -o book.pdf --pattern "*.jpg"
   python image_to_pdf.py --config config.json -y  # 設定ファイルから自動設定（確認なし）
   python image_to_pdf.py -i /Users/fatowl/Desktop/KindleScreenshots/MyKindleBook -o MyBook.pdf -y
+  python image_to_pdf.py -i ./images -o book.pdf --pages-per-pdf 50  # 50ページごとに分割
         """
     )
     
@@ -250,6 +310,14 @@ def parse_arguments():
         "-y", "--yes",
         action="store_true",
         help="確認プロンプトをスキップして自動実行"
+    )
+    
+    parser.add_argument(
+        "--pages-per-pdf",
+        type=int,
+        default=None,
+        metavar="N",
+        help="1つのPDFあたりのページ数（指定すると指定ページ数ごとにPDFを分割）"
     )
     
     return parser.parse_args()
@@ -307,6 +375,8 @@ def main():
         print(f"ファイルパターン: {args.pattern if args.pattern else '*.png, *.jpg, *.jpeg'}")
         print(f"品質設定: {args.quality}")
         print(f"最適化: {'無効' if args.no_optimize else '有効'}")
+        if args.pages_per_pdf:
+            print(f"分割設定: {args.pages_per_pdf}ページごとに分割")
         print("=" * 60)
         
         # 画像ファイルを検索（PNG/JPG対応）
@@ -327,7 +397,8 @@ def main():
             image_files=image_files,
             output_pdf=output_pdf,
             quality=args.quality,
-            optimize=not args.no_optimize
+            optimize=not args.no_optimize,
+            pages_per_pdf=args.pages_per_pdf
         )
         
         print("\n" + "=" * 60)
